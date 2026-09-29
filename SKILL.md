@@ -60,6 +60,7 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
 
 - `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, ask the user to paste one and write it to `.env` (never to the user's `<videos_dir>`).
+- **Local transcription instead:** if `.env` sets `VIDEO_USE_ASR=mlx` and `WHISPER_PYTHON=<python with mlx_whisper>`, `transcribe.py` / `transcribe_batch.py` run whisper-large-v3 on this Mac (`helpers/whisper_mlx_worker.py`), upload nothing and need no key. Same JSON shape, but **no speaker IDs** (packed lines carry no `S0`/`S1` — attribute speakers from context and mark them uncertain) and no real audio events; suspected whisper hallucinations appear as `(whisper: possible hallucination)` before the line. Batch runs one file at a time.
 - `ffmpeg` + `ffprobe` on PATH.
 - Python deps installed (`uv sync` or `pip install -e .` inside the repo).
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.

@@ -1,10 +1,15 @@
-"""Transcribe a video with ElevenLabs Scribe.
+"""Transcribe a video with ElevenLabs Scribe, or locally with mlx-whisper.
 
 Extracts mono 16kHz audio via ffmpeg, uploads to Scribe with verbatim +
 diarize + audio events + word-level timestamps, writes the full response
 to <edit_dir>/transcripts/<video_stem>.json.
 
 Cached: if the output file already exists, the upload is skipped.
+
+Backend: VIDEO_USE_ASR=mlx (environment or .env) runs whisper-large-v3 locally
+via helpers/whisper_mlx_worker.py under WHISPER_PYTHON (a Python with
+mlx_whisper installed) and writes the same Scribe-shaped JSON, minus speaker
+diarization. Nothing is uploaded and no API key is needed. Default: scribe.
 
 Usage:
     python helpers/transcribe.py <video_path>
@@ -33,7 +38,11 @@ import requests
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
 
-def load_api_key() -> str:
+WORKER = Path(__file__).resolve().parent / "whisper_mlx_worker.py"
+
+
+def load_setting(name: str) -> str:
+    """A value from .env (repo root, then cwd), else the environment, else ''."""
     for candidate in [Path(__file__).resolve().parent.parent / ".env", Path(".env")]:
         if candidate.exists():
             for line in candidate.read_text().splitlines():
@@ -41,11 +50,27 @@ def load_api_key() -> str:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                if k.strip() == "ELEVENLABS_API_KEY":
+                if k.strip() == name:
                     return v.strip().strip('"').strip("'")
-    v = os.environ.get("ELEVENLABS_API_KEY", "")
+    return os.environ.get(name, "")
+
+
+def asr_backend() -> str:
+    """'scribe' (hosted, default) or 'mlx' (local whisper)."""
+    b = (load_setting("VIDEO_USE_ASR") or "scribe").lower()
+    if b not in ("scribe", "mlx"):
+        sys.exit(f"VIDEO_USE_ASR must be 'scribe' or 'mlx', got {b!r}")
+    return b
+
+
+def load_api_key() -> str | None:
+    """The Scribe key, or None when the local backend is selected."""
+    if asr_backend() == "mlx":
+        return None
+    v = load_setting("ELEVENLABS_API_KEY")
     if not v:
-        sys.exit("ELEVENLABS_API_KEY not found in .env or environment")
+        sys.exit("ELEVENLABS_API_KEY not found in .env or environment "
+                 "(or set VIDEO_USE_ASR=mlx to transcribe locally)")
     return v
 
 
@@ -113,6 +138,19 @@ def call_scribe(
     return resp.json()
 
 
+def call_mlx(audio_path: Path, language: str | None = None) -> dict:
+    python = load_setting("WHISPER_PYTHON")
+    if not python:
+        sys.exit("VIDEO_USE_ASR=mlx needs WHISPER_PYTHON (a python with mlx_whisper) in .env")
+    cmd = [python, str(WORKER), str(audio_path)]
+    if language:
+        cmd += ["--language", language]
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(f"mlx-whisper failed: {out.stderr[-800:]}")
+    return json.loads(out.stdout)
+
+
 def transcript_path(edit_dir: Path, video: Path, audio_track: int = 0) -> Path:
     """Where a video's transcript lands.
 
@@ -128,7 +166,7 @@ def transcript_path(edit_dir: Path, video: Path, audio_track: int = 0) -> Path:
 def transcribe_one(
     video: Path,
     edit_dir: Path,
-    api_key: str,
+    api_key: str | None,
     language: str | None = None,
     num_speakers: int | None = None,
     verbose: bool = True,
@@ -162,6 +200,7 @@ def transcribe_one(
 
         # Uploading silence costs the same as uploading speech and returns
         # nothing, so catch the wrong-track case before paying for it.
+        # (Locally it would just return nothing — same check, same message.)
         peak = peak_dbfs(audio)
         if peak < -60.0:
             raise RuntimeError(
@@ -173,9 +212,14 @@ def transcribe_one(
             )
 
         size_mb = audio.stat().st_size / (1024 * 1024)
-        if verbose:
-            print(f"  uploading {video.stem}.wav ({size_mb:.1f} MB)", flush=True)
-        payload = call_scribe(audio, api_key, language, num_speakers)
+        if api_key is None:
+            if verbose:
+                print(f"  mlx-whisper on {video.stem}.wav ({size_mb:.1f} MB)", flush=True)
+            payload = call_mlx(audio, language)
+        else:
+            if verbose:
+                print(f"  uploading {video.stem}.wav ({size_mb:.1f} MB)", flush=True)
+            payload = call_scribe(audio, api_key, language, num_speakers)
 
     out_path.write_text(json.dumps(payload, indent=2))
     dt = time.time() - t0
@@ -190,7 +234,7 @@ def transcribe_one(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Transcribe a video with ElevenLabs Scribe")
+    ap = argparse.ArgumentParser(description="Transcribe a video with ElevenLabs Scribe or local mlx-whisper")
     ap.add_argument("video", type=Path, help="Path to video file")
     ap.add_argument(
         "--edit-dir",

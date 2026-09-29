@@ -1,7 +1,7 @@
 """Batch-transcribe every video in a directory with 4 parallel workers.
 
 Walks <videos_dir> for common video extensions, runs ElevenLabs Scribe on
-each, writes transcripts to <videos_dir>/edit/transcripts/<name>.json.
+each (or local mlx-whisper, one at a time — see transcribe.py), writes transcripts to <videos_dir>/edit/transcripts/<name>.json.
 
 Cached per-file: any source that already has a transcript is skipped.
 
@@ -85,6 +85,9 @@ def main() -> None:
         return
 
     api_key = load_api_key()
+    if api_key is None and args.workers > 1:
+        # One GPU: parallel whisper runs just contend for it (and its memory).
+        args.workers = 1
 
     print(f"transcribing {len(pending)} files with {args.workers} parallel workers")
     t0 = time.time()

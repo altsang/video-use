@@ -160,8 +160,18 @@ FONT_CANDIDATES = [
 ]
 
 
-def load_font(size: int) -> ImageFont.ImageFont:
-    for fp in FONT_CANDIDATES:
+# Transcript words and file names can be Korean/Japanese/Chinese; the mono
+# fonts above have no CJK glyphs and draw empty boxes, so labels try these first.
+CJK_FONT_CANDIDATES = [
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+]
+
+
+def load_font(size: int, cjk: bool = False) -> ImageFont.ImageFont:
+    for fp in (CJK_FONT_CANDIDATES if cjk else []) + FONT_CANDIDATES:
         if Path(fp).exists():
             try:
                 return ImageFont.truetype(fp, size)
@@ -220,9 +230,9 @@ def render_timeline(
         canvas = Image.new("RGB", (canvas_width, canvas_height), BG)
         draw = ImageDraw.Draw(canvas, "RGBA")
 
-        header_font = load_font(22)
+        header_font = load_font(22, cjk=True)
         label_font = load_font(14)
-        small_font = load_font(12)
+        small_font = load_font(12, cjk=True)
 
         # Header — time range
         draw.text(
