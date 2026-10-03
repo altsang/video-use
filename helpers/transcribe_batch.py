@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from transcribe import load_api_key, transcribe_one, transcript_path
+from transcribe import load_api_key, transcribe_one, transcript_path, use_local_asr
 
 
 VIDEO_EXTS = {".mp4", ".MP4", ".mov", ".MOV", ".mkv", ".MKV", ".avi", ".AVI", ".m4v"}
@@ -85,6 +85,9 @@ def main() -> None:
         return
 
     api_key = load_api_key()
+    if use_local_asr() and args.workers > 1:
+        args.workers = 1   # one local Whisper at a time: it already uses the whole GPU
+        print("local Whisper (VIDEO_USE_ASR=mlx): one file at a time")
 
     print(f"transcribing {len(pending)} files with {args.workers} parallel workers")
     t0 = time.time()
