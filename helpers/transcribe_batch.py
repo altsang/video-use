@@ -20,6 +20,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
+from safety import check_writable  # noqa: E402
 from transcribe import load_api_key, transcribe_one, transcript_path, use_local_asr
 
 
@@ -69,6 +71,7 @@ def main() -> None:
         sys.exit(f"not a directory: {videos_dir}")
 
     edit_dir = (args.edit_dir or (videos_dir / "edit")).resolve()
+    check_writable(edit_dir)
     (edit_dir / "transcripts").mkdir(parents=True, exist_ok=True)
 
     videos = find_videos(videos_dir)

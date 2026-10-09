@@ -60,6 +60,8 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
 
 - `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, ask the user to paste one and write it to `.env` (never to the user's `<videos_dir>`).
+- Or local transcription, with nothing uploaded and no key needed: `VIDEO_USE_ASR=mlx` (Apple Silicon) or `VIDEO_USE_ASR=faster` (faster-whisper on the CPU: Windows/Intel; `WHISPER_MODEL`, `WHISPER_DOWNLOAD_ROOT`). Set it in `.env` at the repo root or in the current directory. Local backends have no diarization or audio events.
+- `VIDEO_USE_READONLY_DIRS` (os.pathsep-separated) lists folders the helpers refuse to write into, e.g. original footage in OneDrive. Work on copies.
 - `ffmpeg` + `ffprobe` on PATH.
 - Python deps installed (`uv sync` or `pip install -e .` inside the repo).
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.

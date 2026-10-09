@@ -20,6 +20,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
+from safety import check_writable  # noqa: E402
+
 
 def format_time(seconds: float) -> str:
     """Format a time in seconds as "NNN.NN" with fixed 6-char width for alignment."""
@@ -124,7 +127,7 @@ def group_into_phrases(
 
 def pack_one_file(json_path: Path, silence_threshold: float) -> tuple[str, float, list[dict]]:
     """Return (header_name, duration, phrases) for one transcript file."""
-    data = json.loads(json_path.read_text())
+    data = json.loads(json_path.read_text(encoding="utf-8"))
     words = data.get("words", [])
     phrases = group_into_phrases(words, silence_threshold)
     if phrases:
@@ -192,6 +195,7 @@ def main() -> None:
     markdown = render_markdown(entries, args.silence_threshold)
 
     out_path = args.output or (edit_dir / "takes_packed.md")
+    check_writable(out_path)
     out_path.write_text(markdown, encoding="utf-8")
 
     total_phrases = sum(len(e[2]) for e in entries)

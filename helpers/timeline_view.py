@@ -30,6 +30,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
+from safety import check_writable  # noqa: E402
+
 
 # -------- Frame extraction ---------------------------------------------------
 
@@ -118,7 +121,7 @@ def compute_envelope(video: Path, start: float, end: float, samples: int = 2000)
 def words_in_range(transcript_path: Path, start: float, end: float) -> list[dict]:
     if not transcript_path.exists():
         return []
-    data = json.loads(transcript_path.read_text())
+    data = json.loads(transcript_path.read_text(encoding="utf-8"))
     out: list[dict] = []
     for w in data.get("words", []):
         t = w.get("type", "word")
@@ -157,6 +160,9 @@ FONT_CANDIDATES = [
     "/System/Library/Fonts/SFNSMono.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    "C:/Windows/Fonts/malgun.ttf",    # Windows: Korean-capable
+    "C:/Windows/Fonts/consola.ttf",
+    "C:/Windows/Fonts/arial.ttf",
 ]
 
 
@@ -325,6 +331,7 @@ def render_timeline(
             txt = f"shaded bands = silences ≥ 400ms ({len(silences)} gap(s))"
             draw.text((strip_x0, label_y + 30), txt, fill=DIM, font=label_font)
 
+        check_writable(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         canvas.save(out_path, "PNG", optimize=True)
         print(f"saved: {out_path}  ({out_path.stat().st_size // 1024} KB)")

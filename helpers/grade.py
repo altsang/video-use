@@ -34,6 +34,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
+from safety import check_writable  # noqa: E402
+
 
 PRESETS: dict[str, str] = {
     # Subtle baseline — barely perceptible cleanup. No color shift.
@@ -127,7 +130,7 @@ def _sample_frame_stats(
             except (ValueError, IndexError):
                 return None
 
-        with open(metadata_path) as f:
+        with open(metadata_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if "lavfi.signalstats.YBITDEPTH" in line:
@@ -361,6 +364,7 @@ def main() -> None:
         # Auto mode (default)
         filter_string, _ = auto_grade_for_clip(args.input, verbose=True)
 
+    check_writable(args.output)
     print(f"grading {args.input.name} → {args.output.name}")
     if filter_string:
         print(f"  filter: {filter_string[:120]}{'...' if len(filter_string) > 120 else ''}")

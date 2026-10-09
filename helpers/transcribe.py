@@ -6,6 +6,12 @@ to <edit_dir>/transcripts/<video_stem>.json.
 
 Cached: if the output file already exists, the upload is skipped.
 
+Backends (VIDEO_USE_ASR in .env or the environment):
+    (unset)  ElevenLabs Scribe - uploads audio; diarization + audio events
+    mlx      local Whisper large-v3 on Apple Silicon (WHISPER_PYTHON with mlx_whisper)
+    faster   local faster-whisper on the CPU (Windows/Intel/any): WHISPER_MODEL (default medium),
+             WHISPER_DOWNLOAD_ROOT (model cache), WHISPER_THREADS. No diarization/audio events.
+
 Usage:
     python helpers/transcribe.py <video_path>
     python helpers/transcribe.py <video_path> --edit-dir /custom/edit
@@ -29,6 +35,9 @@ from pathlib import Path
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
+from safety import check_writable  # noqa: E402
+
 
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
@@ -37,7 +46,7 @@ def env_value(key: str) -> str:
     """A setting from .env (repo root, then cwd), else the environment."""
     for candidate in [Path(__file__).resolve().parent.parent / ".env", Path(".env")]:
         if candidate.exists():
-            for line in candidate.read_text().splitlines():
+            for line in candidate.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
@@ -47,9 +56,14 @@ def env_value(key: str) -> str:
     return os.environ.get(key, "")
 
 
+def asr_backend() -> str:
+    """'mlx' (Whisper on Apple Silicon), 'faster' (faster-whisper on the CPU), or '' (ElevenLabs Scribe)."""
+    return env_value("VIDEO_USE_ASR").strip().lower()
+
+
 def use_local_asr() -> bool:
-    """VIDEO_USE_ASR=mlx: transcribe on this Mac with Whisper large-v3 (mlx_whisper) — nothing uploaded."""
-    return env_value("VIDEO_USE_ASR").lower() == "mlx"
+    """VIDEO_USE_ASR=mlx or faster: transcribe on this machine - nothing uploaded."""
+    return asr_backend() in ("mlx", "faster")
 
 
 def load_api_key() -> str:
@@ -94,6 +108,37 @@ def call_whisper(audio_path: Path, language: str | None = None) -> dict:
                           "logprob": round(math.log(max(w.get("probability") or 1e-9, 1e-9)), 4)})
     return {"language_code": r.get("language"), "text": r.get("text", "").strip(), "words": words,
             "asr": f"local:{model}"}
+
+
+def scribe_shape(word_iter, language: str | None, model: str) -> dict:
+    """(text, start, end, probability) tuples -> Scribe's words/spacing shape, one speaker."""
+    words: list[dict] = []
+    for text, start, end, prob in word_iter:
+        text = text.strip()
+        if not text:
+            continue
+        if words:
+            words.append({"text": " ", "start": words[-1]["end"], "end": round(start, 3),
+                          "type": "spacing", "speaker_id": "speaker_0"})
+        words.append({"text": text, "start": round(start, 3), "end": round(end, 3),
+                      "type": "word", "speaker_id": "speaker_0",
+                      "logprob": round(math.log(max(prob or 1e-9, 1e-9)), 4)})
+    return {"language_code": language, "text": " ".join(w["text"] for w in words if w["type"] == "word"),
+            "words": words, "asr": model}
+
+
+def call_faster_whisper(audio_path: Path, language: str | None = None) -> dict:
+    """faster-whisper on the CPU (int8) - for Windows/Intel machines without MLX. Nothing uploaded."""
+    from faster_whisper import WhisperModel  # noqa: PLC0415 - optional dependency
+
+    model_name = env_value("WHISPER_MODEL") or "medium"
+    root = env_value("WHISPER_DOWNLOAD_ROOT") or None
+    threads = int(env_value("WHISPER_THREADS") or 0)
+    model = WhisperModel(model_name, device="cpu", compute_type="int8", download_root=root, cpu_threads=threads)
+    segments, info = model.transcribe(str(audio_path), language=language or None, word_timestamps=True,
+                                      condition_on_previous_text=False, beam_size=5)
+    tuples = ((w.word, w.start, w.end, w.probability) for seg in segments for w in (seg.words or []))
+    return scribe_shape(tuples, info.language, f"local:faster-whisper:{model_name}")
 
 
 def count_audio_tracks(video_path: Path) -> int:
@@ -186,6 +231,7 @@ def transcribe_one(
     Cached: returns existing path immediately if the transcript already exists.
     """
     transcripts_dir = edit_dir / "transcripts"
+    check_writable(transcripts_dir)
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     out_path = transcript_path(edit_dir, video, audio_track)
 
@@ -223,13 +269,14 @@ def transcribe_one(
         if use_local_asr():
             if verbose:
                 print(f"  transcribing {video.stem}.wav locally ({size_mb:.1f} MB, no upload)", flush=True)
-            payload = call_whisper(audio, language)
+            payload = (call_faster_whisper(audio, language) if asr_backend() == "faster"
+                       else call_whisper(audio, language))
         else:
             if verbose:
                 print(f"  uploading {video.stem}.wav ({size_mb:.1f} MB)", flush=True)
             payload = call_scribe(audio, api_key, language, num_speakers)
 
-    out_path.write_text(json.dumps(payload, indent=2))
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     dt = time.time() - t0
 
     if verbose:
