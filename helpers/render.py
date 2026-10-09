@@ -767,6 +767,7 @@ def main() -> None:
     out_path = args.output.resolve()
     check_writable(edit_dir)
     check_writable(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 1. Extract per-segment (auto-grade per range if EDL grade is "auto")
     segment_paths = extract_all_segments(
