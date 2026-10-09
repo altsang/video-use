@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import unicodedata
 from pathlib import Path
 
 
@@ -32,11 +33,18 @@ def readonly_dirs() -> list[str]:
     return [d for d in raw.split(os.pathsep) if d.strip()]
 
 
+def _norm(p: Path | str) -> str:
+    """Comparable form of a path: resolved, Unicode-NFC (macOS stores Korean names decomposed,
+    typed names are composed), and case-folded where the filesystem ignores case."""
+    s = unicodedata.normalize("NFC", os.path.realpath(p))
+    return s.casefold() if sys.platform in ("win32", "darwin") else s
+
+
 def check_writable(path: Path | str) -> None:
     """Exit with a clear message if `path` is inside a read-only footage folder."""
-    target = os.path.normcase(os.path.realpath(path))
+    target = _norm(path)
     for d in readonly_dirs():
-        root = os.path.normcase(os.path.realpath(d))
+        root = _norm(d)
         if target == root or target.startswith(root.rstrip(os.sep) + os.sep):
             sys.exit(f"refusing to write inside a read-only footage folder ({d}): {path}\n"
                      "Copy the footage to a working folder first and write there.")

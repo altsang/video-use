@@ -33,6 +33,8 @@ import time
 import wave
 from pathlib import Path
 
+import numpy as np
+
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # helpers/ even when loaded by file path
@@ -135,7 +137,12 @@ def call_faster_whisper(audio_path: Path, language: str | None = None) -> dict:
     root = env_value("WHISPER_DOWNLOAD_ROOT") or None
     threads = int(env_value("WHISPER_THREADS") or 0)
     model = WhisperModel(model_name, device="cpu", compute_type="int8", download_root=root, cpu_threads=threads)
-    segments, info = model.transcribe(str(audio_path), language=language or None, word_timestamps=True,
+    # Hand over decoded samples (the wav is 16 kHz mono s16 from extract_audio) instead of a path:
+    # faster-whisper's own decoder (PyAV) breaks on some PyAV releases.
+    with wave.open(str(audio_path), "rb") as w:
+        pcm = w.readframes(w.getnframes())
+    samples = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
+    segments, info = model.transcribe(samples, language=language or None, word_timestamps=True,
                                       condition_on_previous_text=False, beam_size=5)
     tuples = ((w.word, w.start, w.end, w.probability) for seg in segments for w in (seg.words or []))
     return scribe_shape(tuples, info.language, f"local:faster-whisper:{model_name}")
