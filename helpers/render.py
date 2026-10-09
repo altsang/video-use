@@ -255,6 +255,12 @@ def probe_source_fps(video: Path) -> str | None:
 # -------- Per-segment extraction (Rule 2 + Rule 3) --------------------------
 
 
+def source_has_audio(source: Path) -> bool:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                          "-of", "csv=p=0", str(source)], capture_output=True, text=True)
+    return bool(out.stdout.strip())
+
+
 def extract_segment(
     source: Path,
     seg_start: float,
@@ -308,16 +314,19 @@ def extract_segment(
     # own rate; fall back to 24 only if it can't be probed.
     out_rate = rate if rate is not None else (probe_source_fps(source) or "24")
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", f"{seg_start:.3f}",
-        "-i", str(source),
-        "-t", f"{duration:.3f}",
-        "-vf", vf,
-        "-af", af,
+    # Every segment gets the same audio layout (stereo 48 kHz AAC). A source with no audio
+    # (e.g. a rendered title card) gets silence: otherwise the lossless concat takes its stream
+    # layout from the first segment and silently drops the audio of the whole video.
+    has_audio = source_has_audio(source)
+    cmd = ["ffmpeg", "-y", "-ss", f"{seg_start:.3f}", "-i", str(source)]
+    if not has_audio:
+        cmd += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    cmd += ["-t", f"{duration:.3f}", "-vf", vf]
+    cmd += ["-af", af] if has_audio else ["-map", "0:v:0", "-map", "1:a:0"]
+    cmd += [
         "-c:v", "libx264", "-preset", preset, "-crf", crf,
         "-pix_fmt", "yuv420p", "-r", out_rate,
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart",
         str(out_path),
     ]
